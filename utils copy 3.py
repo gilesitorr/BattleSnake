@@ -100,6 +100,30 @@ def score_board_distance_from_body(grid, snake, height, width, alpha=8):
     body_score = body_score - np.max(body_score)
     return body_score
 
+# This function scores the distance of a tile from the tail of a snake
+# The score should be a value between -1 and 1, depending on the length of the snake and the distance from the tail
+# This follows a tanh function
+def score_tile_distance_from_tail(snake, tile, coef=1):
+    tail = snake["body"][-1]
+    distance = np.abs(tail["x"] - tile["x"]) + np.abs(tail["y"] - tile["y"])
+    return np.tanh(coef/distance)
+
+# This function scores the distance of all tiles from the tail of a snake
+def score_board_distance_from_tail(grid, snake, coef=1):
+    tail_score = np.array([[score_tile_distance_from_tail(snake, tile, coef) for tile in row] for row in grid])
+    # Normalize the tail score and center it to 0
+    # tail_score = tail_score / np.sum(tail_score) - 1
+    # tail_score = (tail_score - np.min(tail_score)) / (np.max(tail_score) - np.min(tail_score))
+    sign_tail_score = np.sign(tail_score[0][0])
+    tail_score = tail_score - np.min(tail_score)
+    tail_score = tail_score / np.sum(tail_score)
+    if sign_tail_score < 0:
+        tail_score = tail_score - np.max(tail_score)
+    # else:
+    #     tail_score = tail_score - np.min(tail_score)
+    # tail_score = (tail_score - np.median(tail_score))#*2
+    return tail_score
+
 # This function scores the distance of a tile from the food
 # The score is an exponential function of the distance
 def score_tile_distance_from_food(tile, food, beta=1):
@@ -135,6 +159,7 @@ def score_board(board, snakes, foods, my_snake, alpha=None, beta=None, delta=1, 
         head_scores += score_board_distance_from_head(grid, snake, alpha=alpha_tmp)
     if len(snakes) > 1:
         head_scores /= len(snakes)-1
+    #
     body_scores = np.zeros((board["height"], board["width"]))
     for id, snake in enumerate(snakes):
         if alpha is None:
@@ -143,13 +168,25 @@ def score_board(board, snakes, foods, my_snake, alpha=None, beta=None, delta=1, 
             alpha_tmp = alpha
         body_scores += score_board_distance_from_body(grid, snake, board["height"], board["width"], alpha=alpha_tmp)
     body_scores /= len(snakes)
+    #
+    tail_scores = np.zeros((board["height"], board["width"]))
+    for snake in snakes:
+        # The snake is an unbound real number (-inf, inf)
+        # The value depends on the length of the snake and the distance from the tail
+        # The function decreases the score as the distance from the tail increases
+        # The function increases the score as the length of the snake increases
+        # The coefficient is a ponderation factor which considers the length of the snake
+        coef = (len(snake["body"])-len(my_snake["body"])+1)*len(snake["body"])/len(my_snake["body"])
+        tail_scores += score_board_distance_from_tail(grid, snake, coef)
+    tail_scores /= len(snakes)
+    #
     # print(f"HEAD SCORES: {head_scores}")
     food_scores = np.zeros((board["height"], board["width"]))
     for food in foods:
         food_scores += score_board_distance_from_food(grid, food, beta, delta, gamma, health)
     food_scores /= len(foods)
     # print(f"FOOD SCORES: {food_scores}")
-    return (accessibility_score + head_scores + body_scores + food_scores) / 4
+    return (accessibility_score + head_scores + body_scores + tail_scores + food_scores) / 4
 
 # Now parse the board score to avoid impossible moves
 def parse_board_score(board_score, snakes, foods, my_snake=None):
@@ -262,8 +299,12 @@ def get_next_move(game_state):
         snake_bodies = [body[:len(body)-1] if len(body) > 1 else body for body in snake_bodies]
         snake_bodies = [[(tile["x"], tile["y"]) for tile in body] for body in snake_bodies]
         #
+        # If the best move is towards the tail (less or equal than 3), choose the best move
+        distance_to_tail = np.abs(my_snake["body"][-1]["x"] - head["x"]) + np.abs(my_snake["body"][-1]["y"] - head["y"])
+        if distance_to_tail == 1:
+            best_move = (move_tiers[0][0], move_tiers[0][1])
         # If the two best moves are opposite, choose the best move based on the number of accessible tiles
-        if (move_tiers[0][0] == -move_tiers[1][0]) and (move_tiers[0][1] == -move_tiers[1][1]):
+        elif (move_tiers[0][0] == -move_tiers[1][0]) and (move_tiers[0][1] == -move_tiers[1][1]):
             # For every move, count the number of accessible tiles from the new head position
             min_score = move_tiers[-1][2]
             for i, (dx, dy, score) in enumerate(move_tiers):
@@ -279,7 +320,7 @@ def get_next_move(game_state):
             print(f"UPDATE MOVE TIERS: {move_tiers}")
             best_move = (move_tiers[0][0], move_tiers[0][1])
         # If the two best moves are similar (Percentual difference less than 10%), choose the best move based on the number of accessible tiles
-        elif abs((move_tiers[0][2] - move_tiers[1][2]) / move_tiers[0][2]) < 0.1:
+        elif abs((move_tiers[0][2] - move_tiers[1][2]) / move_tiers[0][2]) < 0.2:
             # For every move, count the number of accessible tiles from the new head position
             min_score = move_tiers[-1][2]
             for i, (dx, dy, score) in enumerate(move_tiers):
@@ -311,9 +352,33 @@ def get_next_move(game_state):
             print(f"UPDATE MOVE TIERS: {move_tiers}")
             best_move = (move_tiers[0][0], move_tiers[0][1])
         #
+        # # Now, count the number of accessible tiles from the new head position for the best move
+        # new_x, new_y = head["x"] + best_move[0], head["y"] + best_move[1]
+        # accessible_tiles = count_accessible_tiles(board, (new_x, new_y), snake_bodies, hazards, board["width"], board["height"])
+        # distance_to_tail = np.abs(my_snake["tail"]["x"] - new_x) + np.abs(my_snake["tail"]["y"] - new_y)
+        # # If the best move has little space to move, choose the second best move
+        # # To know if the best move has little space to move, check if the number of accessible tiles is less than the length of my head to tail
+        # if accessible_tiles < distance_to_tail:
+        #     # If that's the case, choose the move with the most accessible tiles and brings the snake closer to the tail
+        #     if len(move_tiers[0]) > 3:
+        #         min_score = move_tiers[-1][2]
+        #         for i, (dx, dy, score) in enumerate(move_tiers):
+        #             new_x, new_y = head["x"] + dx, head["y"] + dy
+        #             accessible_tiles = count_accessible_tiles(board, (new_x, new_y), snake_bodies, hazards, board["width"], board["height"])
+        #             distance_to_tail = np.abs(my_snake["tail"]["x"] - new_x) + np.abs(my_snake["tail"]["y"] - new_y)
+        #             # Now ponder the moves based on the number of accessible tiles and the score
+        #             # The ponderation considers that accessible tiles has a range from [0, width*height] and the score has a range from [-1, 1]
+        #             # Hence, we change the score range to [0, 2] and ponder the score by the number of accessible tiles
+        #             pondered_score = (score-min_score+1) * (accessible_tiles / (board["width"] * board["height"]))
+        #             # pondered_score = accessible_tiles
+        #             move_tiers[i] = (dx, dy, score, accessible_tiles, pondered_score)
+        #         move_tiers = sorted(move_tiers, key=lambda x: x[4], reverse=True)
+        #         print(f"UPDATE MOVE TIERS: {move_tiers}")
+        #         best_move = (move_tiers[0][0], move_tiers[0][1])
+        #
         # Now, if all the moves keep being the similar, check based on closeness to the local maximum of each move
         if len(move_tiers[0]) > 3:
-            if abs((move_tiers[0][4] - move_tiers[1][4]) / move_tiers[0][4]) < 0.1:
+            if abs((move_tiers[0][4] - move_tiers[1][4]) / move_tiers[0][4]) < 0.2:
                 # Find the local maximum for each move and choose the one that is closer to the local maximum
                 for i, (dx, dy, score, accessible_tiles, pondered_score) in enumerate(move_tiers):
                     new_x, new_y = head["x"] + dx, head["y"] + dy
