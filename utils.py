@@ -320,6 +320,7 @@ def get_next_move(game_state):
                     maximum_value_dict = find_local_maximum(board_score, (new_x, new_y))
                     sum_to_local_maximum = maximum_value_dict["sum"]
                     distance_to_local_maximum = maximum_value_dict["distance"]
+                    local_maximum = maximum_value_dict["max"]
                     maximum_value = board_score[local_maximum[1], local_maximum[0]]
                     new_score = ((sum_to_local_maximum+distance_to_local_maximum)*0.5/distance_to_local_maximum) # Center the scores to 0 and normalize to 1 and ponder by the distance to the local maximum
                     new_score = new_score * pondered_score
